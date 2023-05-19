@@ -75,33 +75,32 @@ class Ball:
         
         if self.rect.colliderect(paddle_1.rect):
             self.vel.x *= -1
-            distance  = (20 + paddle_1.rect.y)  - self.rect.y
-            if distance <= 0:
-                distance = (distance/20)
-                self.vel.y = distance * -1
+            distance  = (40 + paddle_1.rect.y)  - self.rect.y
+            if distance > 0:
+                
+                self.vel.y = (distance/20+2)*-1
+                           
+            elif distance < 0:
+                self.vel.y = (abs(distance)/20+2)
                 
             else:
-                distance = abs(distance)
-                distance = (distance/20)+2
-                self.vel.y = distance * -1
+                self.vel.y = self.vel.y * -1
+
               
             
         if self.rect.colliderect(paddle_2.rect):
             self.vel.x *= -1
-            distance  = (20 + paddle_2.rect.y) - self.rect.y
-            if distance <= 0:
-                distance = (distance/20)
-                self.vel.y = distance * -1
-                    
+            distance  = (40 + paddle_2.rect.y) - self.rect.y
+            if distance > 0:
+                
+                self.vel.y = (distance/25+2)*-1
+                          
+            elif distance < 0:
+                self.vel.y = (abs(distance)/25+2)
+                
             else:
-                distance = abs(distance)
-                distance = (distance/20)+2
-                self.vel.y = distance * -1
+                self.vel.y = self.vel.y * -1
 
-            
-        
-        
-        
     
     def draw(self):
         pygame.draw.rect(screen,self.col,self.rect)
