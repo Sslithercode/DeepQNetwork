@@ -1,15 +1,23 @@
 import numpy as np
-import keras
 import pygame
 import random
 import tensorflow as tf
+import tensorflow_probability as tfp
+
+from tensorflow import keras
 from gym import Env
 from gym.spaces import Discrete, Box
-
+import numpy as np
+import keras.backend as K
 pygame.init()
 screen = pygame.display.set_mode((500,500))
 
 clock = pygame.time.Clock()
+
+GAMMA  = 0.9
+
+tfd = tfp.distributions
+
 
 
 class Paddle:
@@ -33,13 +41,24 @@ class Paddle:
             self.rect.y = 500-self.rect.height
     def  draw(self):
         pygame.draw.rect(screen,(255,255,255),self.rect)
-
-
 class PaddleAgent:
     def __init__(self,pos):
+        self.network = keras.Sequential([
+            keras.layers.Dense(3,input_shape=[3],activation="relu"),
+            keras.layers.Dense(2,activation="relu"),
+            keras.layers.Dense(3,activation="softmax")
+        ])
+        self.network.compile(optimizer="adam")
         self.rect = pygame.Rect(pos[0],pos[1],15,100)
         self.vel = pygame.Vector2()
         self.vel.x,self.vel.y = 0,0
+
+
+        self.rewards = []
+        self.actions = []
+        self.states = []
+
+
     def coord_y(self):
         return self.rect.y
     def move(self,action):
@@ -57,13 +76,58 @@ class PaddleAgent:
         self.rect.y += self.vel.y 
     def  draw(self):
         pygame.draw.rect(screen,(255,255,255),self.rect)
+    
+    def act(self,state):
+        pred = self.network(np.array([state]))[0]
+        probs = [round(float(i),3) for i in pred]
+        probs[2] = round(1  - (probs[0]+probs[1]),3)
+        action = np.random.choice([0,1,2],1,p=probs)
+        return action
+    
+    def reset_memory(self):
+        self.rewards = []
+        self.actions = []
+        self.states = []
+
+
+    @tf.function
+    def train_step(self, dr, state, action):
+        with tf.GradientTape() as tape:
+            probs = self.network(state)  # recalculate probs
+            dist = tfd.Categorical(probs=probs)
+            log_p = dist.log_prob(action)  # convert to log probabilities as in the REINFORCE Paper
+            loss =  -tf.cast(dr, tf.float32) * tf.squeeze(log_p)  # Compute loss: discounted_rewards * log_ps but use a negative for gradient ascent
+        grad = tape.gradient(loss, self.network.trainable_variables)
+        self.network.optimizer.apply_gradients(zip(grad, self.network.trainable_variables))
+
+
+    def update_params(self):
+        actions   = tf.convert_to_tensor(self.actions,dtype=tf.float32)
+        rewards = tf.convert_to_tensor(self.rewards,dtype=tf.float32)
+        discounted = np.zeros_like(self.rewards)
+        _rad = 0
+        for t in range(len(rewards)-1,-1,-1):
+            if rewards[t] != 0:
+                _rad = 0
+            _rad *= GAMMA
+            _rad +=rewards[t]
+            discounted[t] = _rad
+
+
+     
+        for i,(dr,state_m) in enumerate(zip(discounted,self.states)):
+            state = tf.convert_to_tensor([state_m]) 
+            self.train_step(dr, state, actions[i])
+            
+            
+
 
 class Ball:
     def __init__(self,pos):
         self.col = (255,255,255)
         self.rect = pygame.Rect(pos[0],pos[1],20,20)
         self.vel = pygame.Vector2()
-        self.vel.x, self.vel.y = 5, 0
+        self.vel.x, self.vel.y = random.choice([-5,5]),0
     def coord_x(self):
         return self.rect.x
     def coord_y(self):
@@ -118,11 +182,10 @@ class Ball:
 
 
 class pong_env(Env):
-    def __init__(self):
+    def __init__(self, agent1,agent2):
         # create the game
         self.ball = Ball((250,250))
-        self.agent2 = PaddleAgent((460,200))
-        self.agent1 = PaddleAgent((15,200))
+        self.agent1,self.agent2 =   agent1,agent2
         self.state1 = [self.ball.coord_x(), self.ball.coord_y(), self.agent1.coord_y()]
         self.state2 = [self.ball.coord_x(), self.ball.coord_y(), self.agent2.coord_y()]
         # Actions, up, down, leave
@@ -139,20 +202,18 @@ class pong_env(Env):
 
        
 
-        if self.ball.rect.colliderect(self.agent1.rect):
-            reward1 = 1
-        else:
-            reward1 = 0
-
-        if self.ball.rect.colliderect(self.agent2.rect):
-            reward2 = 1
-        else:
-            reward2 = 0
-
-        if (self.ball.coord_x() < 10 or self.ball.coord_x() > 490):
+        
+        if (self.ball.coord_x() < 0 or self.ball.coord_x() > 450):
+            if self.ball.coord_x() < 0:
+                reward2 = -1
+                reward1  = 1
+            if self.ball.coord_x() > 450:
+                reward1 = -1
+                reward2 = 1
             done = True
         else:
             done = False
+            reward1,reward2 = 0,0
 
         info = {}
         return self.state1,self.state2, reward1, reward2, done, info
@@ -166,18 +227,17 @@ class pong_env(Env):
         self.agent2.draw()
         self.ball.draw()
         pygame.display.update()
-        clock.tick(60)
 
     def reset(self):
         self.ball.rect.x, self.ball.rect.y = 250,250
-        self.ball.vel.x, self.ball.vel.y = 5,0
+        self.ball.vel.x, self.ball.vel.y =  random.choice([-5,5]), 0
         self.agent1.rect.x, self.agent1.rect.y = 15,200
         self.agent2.rect.x, self.agent2.rect.y = 460,200
         self.state1 = [self.ball.coord_x(), self.ball.coord_y(), self.agent1.coord_y()]
         self.state2 = [self.ball.coord_x(), self.ball.coord_y(), self.agent2.coord_y()]
         return self.state1, self.state2
 
-
+  
 
 '''
 def main():
@@ -200,34 +260,47 @@ def main():
         
     pygame.quit()
 '''
-class AgentInfo:
-    def __init__(self):
-        self.n_state,self.reward,self.score = None,0,0
-        
-agent1_info = AgentInfo()
-agent2_info = AgentInfo()
 
-env = pong_env()
+
+player_A , player_B = PaddleAgent((15,200)), PaddleAgent((460,200))
+env = pong_env(player_A,player_B)
 states = env.observation_space.shape
 actions = env.action_space.n
 
-episodes = 10
-for episode in range(1, episodes+1):
-    state = env.reset()
-    done = False
-    agent1_info.score = 0
-    agent2_info.score = 0
-    while not done:
-        env.render()
-        action1 = env.action_space.sample()
-        action2 = env.action_space.sample()
-        agent1_info.n_state, agent2_info.n_state,agent1_info.reward,agent2_info.reward, done, info = env.step(action1,action2)
-        agent1_info.score += agent1_info.reward
-        agent2_info.score += agent2_info.reward
-    print("Episode:{} Agent1_Score:{} Agent2_Score:{}".format(episode, agent1_info.score, agent2_info.score))
-'''
-if __name__ == "__main__":
-    main()  
-'''
+
+def compute_discount(rewards):
+    new_rewards = rewards.copy()
+    count  = 0
+    for i in range(len(rewards) - 1, -1, -1):
+        new_rewards[i] =round(rewards[-1] * (GAMMA ** count),4)
+        count += 1
+    return new_rewards
+
+def  train():
+    episodes = 1000
+    for episode in range(1, episodes+1):
+        player_A.reset_memory()
+        player_B.reset_memory()
+        state1,state2 = env.reset()
+        done = False
+        scores  =  [0,0]
+        while not done:
+            env.render()
+            action1 = player_A.act(state1)
+            action2 = player_B.act(state2)
+            player_A.states.append(state1)
+            player_B.states.append(state2)
+            player_A.actions.append(action1)
+            player_B.actions.append(action2)
+            state1,state2, r1,r2, done, info = env.step(action1,action2)
+            player_A.rewards.append(r1)
+            player_B.rewards.append(r2)
+            scores[0] += r1 
+            scores[1] += r2
+        print("Episode:{} Agent1_Score:{} Agent2_Score:{}".format(episode, scores[0], scores[1]))
+        player_A.update_params()
+        player_B.update_params()
+train()
+
 
 
